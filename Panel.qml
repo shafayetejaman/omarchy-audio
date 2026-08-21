@@ -297,15 +297,7 @@ Panel {
     if (focusSection === "output") {
       if (selectedIndex === -1) { toggleOutputMute(); return }
       var output = displayOutputs[selectedIndex]
-      if (output) {
-        if (output.portName) {
-          // Port selection: switch the active port on this sink
-          setSinkPort(output.node, output.portName)
-        } else {
-          // Sink selection: switch to this sink
-          setDefaultSink(output.node)
-        }
-      }
+      if (output) activateOutput(output)
       return
     }
     if (focusSection === "input") {
@@ -523,6 +515,25 @@ Panel {
     }
   }
 
+  // Activate an output row (shared by mouse click and keyboard Enter).
+  // A row for a sink that is NOT the current default must make that sink
+  // the default first: pactl set-sink-port alone only moves the jack on
+  // that sink and never reroutes playback, which left the second device
+  // silent when two ports/devices were listed. Port switching only makes
+  // sense on the sink that is already playing.
+  function activateOutput(output) {
+    if (!output || !output.node) return
+    if (!root.sink || root.sink.id !== output.node.id) {
+      setDefaultSink(output.node)
+      return
+    }
+    if (output.portName) {
+      setSinkPort(output.node, output.portName)
+    } else {
+      setDefaultSink(output.node)
+    }
+  }
+
   function setSinkPort(node, portName) {
     if (!node || !portName) return
     var sinkName = String(node.name || "")
@@ -530,8 +541,10 @@ Panel {
     Quickshell.execDetached([
       "pactl", "set-sink-port", sinkName, portName
     ])
-    // Refresh port info after switching
-    if (!portInfoProc.running) portInfoProc.running = true
+    // Refresh port info after switching -- delayed so pactl's change has
+    // landed; reading immediately repopulates portInfo with the stale
+    // active port and flips the highlight back until the next 5s tick.
+    portInfoRefreshTimer.restart()
   }
 
   function setDefaultSource(node) {
@@ -691,6 +704,13 @@ Panel {
       waitForEnd: true
       onStreamFinished: root.updatePortInfo(text)
     }
+  }
+
+  Timer {
+    id: portInfoRefreshTimer
+    interval: 400
+    repeat: false
+    onTriggered: if (!portInfoProc.running) portInfoProc.running = true
   }
 
   Timer {
@@ -1163,13 +1183,7 @@ Panel {
         root.focusSection = "output"
         root.selectedIndex = sinkRow.rowIndex
       }
-      onClicked: {
-        if (sinkRow.portName) {
-          root.setSinkPort(sinkRow.node, sinkRow.portName)
-        } else {
-          root.setDefaultSink(sinkRow.node)
-        }
-      }
+      onClicked: root.activateOutput(sinkRow.output)
     }
   }
 
